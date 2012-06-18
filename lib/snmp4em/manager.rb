@@ -17,8 +17,8 @@ module SNMP4EM
       def init_socket #:nodoc:
         # When the socket is in error state, close the socket and re-open a new one.
         if !@socket.nil? && @socket.error?
-                @socket.close_connection
-                @socket = nil
+          @socket.close_connection
+          @socket = nil
         end
 
         @socket ||= EM::open_datagram_socket("0.0.0.0", 0, Handler)
@@ -57,6 +57,7 @@ module SNMP4EM
 
       @community_ro = args[:community_ro] || args[:community] || "public"
       @community_rw = args[:community_rw] || args[:community] || "public"
+      @cls = args[:class] || SNMP4EM::SnmpTrapd
       
       self.class.init_socket
     end
@@ -65,5 +66,101 @@ module SNMP4EM
       self.class.socket.send_datagram message.encode, @host, @port
     end
 
+    class Trapd < Manager
+
+      def initialize(args = {})
+        super
+        @port = args[:port]   || 162
+        @oid_handler = {}
+      end
+
+      class << self
+        def init_socket #:nodoc:
+        end
+      end
+
+      NULL_HANDLER = Proc.new {}
+
+      ##
+      # Start socket and listen.
+      def start
+        EventMachine.open_datagram_socket @host, @port, @cls, :manager => self
+      end
+
+      ##
+      # Define the default trap handler.  The default trap handler block is
+      # executed only if no other block is applicable.  This handler should
+      # expect to receive both SNMPv1_Trap and SNMPv2_Trap objects.
+      #
+      def on_trap_default(&block)
+        raise ArgumentError, "a block must be provided" unless block
+        @default_handler = block
+      end
+
+      ##
+      # Define a trap handler block for a specific trap ObjectId.  This handler
+      # only applies to SNMPv2 traps.  Note that symbolic OIDs are not
+      # supported by this method (like in the SNMP.Manager class).
+      #
+      def on_trap(object_id, &block)
+        raise ArgumentError, "a block must be provided" unless block
+        @oid_handler[SNMP::ObjectId.new(object_id)] = block
+      end
+
+      ##
+      # Define a trap handler block for all SNMPv1 traps.  The trap yielded
+      # to the block will always be an SNMPv1_Trap.
+      #
+      def on_trap_v1(&block)
+        raise ArgumentError, "a block must be provided" unless block
+        @v1_handler = block
+      end
+
+
+      ##
+      # Define a trap handler block for all SNMPv2c traps.  The trap yielded
+      # to the block will always be an SNMPv2_Trap.  Note that InformRequest
+      # is a subclass of SNMPv2_Trap, so inform PDUs are also received by
+      # this handler.
+      #
+      def on_trap_v2c(&block)
+        raise ArgumentError, "a block must be provided" unless block
+        @v2c_handler = block
+      end
+
+      # Loads external mib modules for utilization.
+      def load_modules(module_list, mib_dir)
+        module_list.each { |m| @mib.load_module(m, mib_dir) }
+      end
+
+      def community_allowed?(msg_community)
+        @community.nil? || @community == msg_community || !(Array(@community) & Array(msg_community)).empty?
+      end
+
+      def select_handler(trap)
+        if trap.kind_of?(SNMP::SNMPv2_Trap)
+          oid = trap.trap_oid
+          if @oid_handler[oid]
+            return @oid_handler[oid]
+          elsif @v2c_handler
+            return @v2c_handler
+          elsif @default_handler
+            return @default_handler
+          else
+            return NULL_HANDLER
+          end
+        elsif trap.kind_of?(SNMP::SNMPv1_Trap)
+          if @v1_handler
+            return @v1_handler
+          elsif @default_handler
+            return @default_handler
+          else
+            return NULL_HANDLER
+          end
+        else
+          return NULL_HANDLER
+        end
+      end
+    end
   end
 end

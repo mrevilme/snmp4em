@@ -4,6 +4,10 @@
 
 This gem extends Ruby-SNMP[http://snmplib.rubyforge.org] to use the asynchronous EventMachine[http://rubyeventmachine.com] library for added performance and scalability. This allows code to scale monitoring applications to access a very high number of devices without the need for complex asynchronous I/O handling.
 
+== Fork specifics
+
+Implemeted SNMP Trap handling.
+
 
 == Features
 
